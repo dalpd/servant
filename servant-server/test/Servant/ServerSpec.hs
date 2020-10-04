@@ -51,9 +51,9 @@ import           Servant.API
                  BasicAuthData (BasicAuthData), Capture, Capture', CaptureAll,
                  Delete, EmptyAPI, Fragment, Get, HasStatus (StatusOf), Header,
                  Headers, HttpVersion, IsSecure (..), JSON, Lenient,
-                 NoContent (..), NoContentVerb, NoFraming, OctetStream, Patch,
+                 NoContent (..), NoContentVerb, NoFraming, OctetStream, Optional, Patch,
                  PlainText, Post, Put, QueryFlag, QueryParam, QueryParams, Raw,
-                 RemoteHost, ReqBody, SourceIO, StdMethod (..), Stream, Strict,
+                 RemoteHost, ReqBody', ReqBody, SourceIO, StdMethod (..), Stream, Strict,
                  UVerb, Union, Verb, WithStatus (..), addHeader)
 import           Servant.Server
                  (Context ((:.), EmptyContext), Handler, Server, Tagged (..),
@@ -501,6 +501,7 @@ fragmentSpec = do
 ------------------------------------------------------------------------------
 type ReqBodyApi = ReqBody '[JSON] Person :> Post '[JSON] Person
            :<|> "blah" :> ReqBody '[JSON] Person :> Put '[JSON] Integer
+           :<|> "meh" :> ReqBody' '[Optional, Strict] '[JSON] Person :> Put '[JSON] Integer
 
 reqBodyApi :: Proxy ReqBodyApi
 reqBodyApi = Proxy
@@ -509,7 +510,7 @@ reqBodySpec :: Spec
 reqBodySpec = describe "Servant.API.ReqBody" $ do
 
   let server :: Server ReqBodyApi
-      server = return :<|> return . age
+      server = return :<|> return . age :<|> return . maybe 0 age
       mkReq method x = THW.request method x
          [(hContentType, "application/json;charset=utf-8")]
 
@@ -525,6 +526,31 @@ reqBodySpec = describe "Servant.API.ReqBody" $ do
     it "responds with 415 if the request body media type is unsupported" $ do
       THW.request methodPost "/"
         [(hContentType, "application/nonsense")] "" `shouldRespondWith` 415
+
+    describe "optional request body" $ do
+      it "request without body succeeds" $ do
+        THW.request methodPut "/meh" [] mempty `shouldRespondWith` 200
+
+      it "request without body responds with proper default value" $ do
+        response <- THW.request methodPut "/meh" [] mempty
+        liftIO $ simpleBody response `shouldBe` encode (0 :: Integer)
+
+      it "responds with 415 if the request body media type is unsupported" $ do
+        THW.request methodPut "/meh" [(hContentType, "application/nonsense")]
+          (encode alice) `shouldRespondWith` 415
+        THW.request methodPut "/meh" [(hContentType, "application/octet-stream")]
+          (encode alice) `shouldRespondWith` 415
+
+      it "request without body and with content-type header succeeds" $ do
+        mkReq methodPut "/meh" mempty `shouldRespondWith` 200
+
+      it "request without body and with content-type header returns default value" $ do
+        response <- mkReq methodPut "/meh" mempty
+        liftIO $ simpleBody response `shouldBe` encode (0 :: Integer)
+
+      it "optional request body can be provided" $ do
+        response <- mkReq methodPut "/meh" (encode alice)
+        liftIO $ simpleBody response `shouldBe` encode (age alice)
 
 -- }}}
 ------------------------------------------------------------------------------
